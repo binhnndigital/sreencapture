@@ -26,19 +26,10 @@ function canvasToDataUrl(canvas) {
 }
 
 async function stitch(msg) {
-  const {
-    parts,
-    viewportWidth,
-    viewportHeight,
-    totalWidth,
-    totalHeight,
-    devicePixelRatio,
-    maxDimension,
-  } = msg;
+  const { parts, totalWidth, totalHeight, devicePixelRatio, maxDimension } = msg;
 
   const dpr = devicePixelRatio || 1;
-  const cssWidth = Math.min(totalWidth, viewportWidth);
-  const pixelWidth = Math.round(cssWidth * dpr);
+  const pixelWidth = Math.round(totalWidth * dpr);
   const pixelHeight = Math.round(totalHeight * dpr);
   const maxSlice = Math.min(maxDimension, 16000);
   const sliceCount = Math.max(1, Math.ceil(pixelHeight / maxSlice));
@@ -55,10 +46,14 @@ async function stitch(msg) {
 
     for (const part of parts) {
       const img = await loadImage(part.dataUrl);
+      const sx = Math.round(part.rect.left * dpr);
+      const sy = Math.round(part.rect.top * dpr);
+      const sw = Math.round(part.rect.width * dpr);
+      const sh = Math.round(part.rect.height * dpr);
+      const dx = Math.round(part.x * dpr);
       const dy = Math.round(part.y * dpr - sliceTopCss * dpr);
-      const dx = Math.round((part.x || 0) * dpr);
-      if (dy + img.height > 0 && dy < canvas.height) {
-        ctx.drawImage(img, dx, dy);
+      if (dy + sh > 0 && dy < canvas.height && sw > 0 && sh > 0) {
+        ctx.drawImage(img, sx, sy, sw, sh, dx, dy, sw, sh);
       }
     }
     images.push(await canvasToDataUrl(canvas));

@@ -1,5 +1,7 @@
 const OFFSCREEN_URL = "offscreen/offscreen.html";
-const CAPTURE_DELAY_MS = 450;
+const CAPTURE_DELAY_MS = 650;
+const CAPTURE_RETRY_DELAY_MS = 700;
+const CAPTURE_MAX_RETRIES = 3;
 const MAX_CANVAS_DIMENSION = 16000;
 
 let creatingOffscreen = null;
@@ -34,6 +36,18 @@ async function sendToTab(tabId, message) {
   return chrome.tabs.sendMessage(tabId, message);
 }
 
+async function captureFrame(windowId) {
+  for (let attempt = 0; attempt < CAPTURE_MAX_RETRIES; attempt++) {
+    try {
+      return await chrome.tabs.captureVisibleTab(windowId, { format: "png" });
+    } catch (err) {
+      const quota = /MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND/.test(String(err));
+      if (!quota || attempt === CAPTURE_MAX_RETRIES - 1) throw err;
+      await sleep(CAPTURE_RETRY_DELAY_MS);
+    }
+  }
+}
+
 async function captureFullPage(tab) {
   const tabId = tab.id;
 
@@ -45,21 +59,19 @@ async function captureFullPage(tab) {
   const metrics = await sendToTab(tabId, { type: "get-metrics" });
   if (!metrics) throw new Error("Không đọc được kích thước trang.");
 
-  const { scrollWidth, scrollHeight, viewportWidth, viewportHeight, devicePixelRatio } = metrics;
+  const { scrollWidth, scrollHeight, stepWidth, stepHeight, devicePixelRatio } = metrics;
 
   const parts = [];
-  const stepY = Math.max(1, viewportHeight);
-  const stepX = Math.max(1, viewportWidth);
+  const stepY = Math.max(1, stepHeight);
+  const stepX = Math.max(1, stepWidth);
 
   try {
     for (let y = 0; y < scrollHeight; y += stepY) {
       for (let x = 0; x < scrollWidth; x += stepX) {
         const pos = await sendToTab(tabId, { type: "scroll-to", x, y });
         await sleep(CAPTURE_DELAY_MS);
-        const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
-          format: "png",
-        });
-        parts.push({ dataUrl, x: pos.scrollX, y: pos.scrollY });
+        const dataUrl = await captureFrame(tab.windowId);
+        parts.push({ dataUrl, x: pos.x, y: pos.y, rect: pos.rect });
       }
     }
   } finally {
@@ -71,9 +83,7 @@ async function captureFullPage(tab) {
   const result = await chrome.runtime.sendMessage({
     type: "stitch",
     parts,
-    viewportWidth,
-    viewportHeight,
-    totalWidth: Math.min(scrollWidth, viewportWidth),
+    totalWidth: scrollWidth,
     totalHeight: scrollHeight,
     devicePixelRatio,
     maxDimension: MAX_CANVAS_DIMENSION,
